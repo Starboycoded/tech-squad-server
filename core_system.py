@@ -1,7 +1,7 @@
 import os
 import time
 import uuid
-from flask import Flask, request, render_template
+from flask import Flask, request
 from whatsapp_api_client_python import API
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -17,21 +17,32 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 green_api = API.GreenApi(GREEN_ID, GREEN_TOKEN)
 ai_client = openai.OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
 
-chat_data = {}  # Temporary session memory
-
-# --- 2. GOOGLE SHEETS CONNECTION ---
-try:
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds_path = "/etc/secrets/creds.json" if os.path.exists("/etc/secrets/creds.json") else "creds.json"
-    creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
-    gc = gspread.authorize(creds)
-    print("SUCCESS: Google Sheets connected.")
-except Exception as e:
-    print(f"CRITICAL: Sheets failed: {e}")
-    gc = None
+chat_data = {}
+gc = None  # Starts empty so the server boots instantly
 
 
-# --- 3. THE WEBHOOK ENGINE ---
+# --- 2. LAZY LOADER FOR GOOGLE SHEETS ---
+def connect_sheets():
+    global gc
+    if gc is None:
+        try:
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            creds_path = "/etc/secrets/creds.json" if os.path.exists("/etc/secrets/creds.json") else "creds.json"
+            creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
+            gc = gspread.authorize(creds)
+            print("SUCCESS: Google Sheets connected.")
+        except Exception as e:
+            print(f"CRITICAL: Sheets failed: {e}")
+    return gc
+
+
+# --- 3. HEALTH CHECK (To satisfy Render's port scan immediately) ---
+@app.route('/')
+def health():
+    return "System Online", 200
+
+
+# --- 4. THE WEBHOOK ENGINE ---
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
@@ -43,8 +54,12 @@ def webhook():
         user_id = sender_data.get('sender')
         text = data.get('messageData', {}).get('textMessageData', {}).get('textMessage', '')
 
-        # 1. Profile Memory Check
-        customer_sheet = gc.open("TechSquad").worksheet("Customers")
+        # Connect to sheets ONLY when someone messages
+        sheet_client = connect_sheets()
+        if not sheet_client:
+            return "OK", 200
+
+        customer_sheet = sheet_client.open("TechSquad").worksheet("Customers")
         customers = customer_sheet.get_all_records()
         profile = next((r for r in customers if str(r['Phone']) == str(user_id)), None)
 
@@ -52,9 +67,8 @@ def webhook():
             chat_data[user_id] = {"cart": []}
         user_session = chat_data[user_id]
 
-        # 2. AI Instructions
-        sheet = gc.open("TechSquad").sheet1
-        inventory = sheet.get_all_records()
+        inventory_sheet = sheet_client.open("TechSquad").sheet1
+        inventory = inventory_sheet.get_all_records()
 
         system_instructions = f"""
         You are Jordan. Inventory: {inventory}. 
@@ -64,7 +78,7 @@ def webhook():
         - Add items to cart as requested.
         - If profile exists, confirm the address: '{profile.get('Address') if profile else ""}'.
         - To finish, generate a 'FINAL RECEIPT'. 
-        - For payment, tell them: 'For this test phase, we are using Cash on Delivery. Simply confirm to place the order.'
+        - For payment, tell them: 'For this test phase, we are using Cash on Delivery.'
         """
 
         response = ai_client.chat.completions.create(
@@ -74,19 +88,16 @@ def webhook():
 
         reply = response.choices[0].message.content
 
-        # 3. Structured Receipt Logic
         if "RECEIPT" in reply.upper() and user_session["cart"]:
             order_id = f"TS-{uuid.uuid4().hex[:6].upper()}"
             subtotal = sum(item['price'] * item['qty'] for item in user_session["cart"])
             items_list = "\n".join(
                 [f"• {i['name']} x{i['qty']} - ₦{i['price'] * i['qty']:,}" for i in user_session["cart"]])
 
-            # Using real or extracted details
             name = profile['Name'] if profile else "New Client"
             address = profile['Address'] if profile else "Address Provided in Chat"
 
-            receipt = f"""
-*TECH SQUAD OFFICIAL RECEIPT*
+            receipt = f"""*TECH SQUAD OFFICIAL RECEIPT*
 ------------------------------------
 *Order ID:* {order_id}
 *Customer:* {name}
@@ -95,18 +106,17 @@ def webhook():
 {items_list}
 ------------------------------------
 *TOTAL:* ₦{subtotal:,}
-*PAYMENT:* Cash on Delivery (Test Mode)
+*PAYMENT:* Cash on Delivery
 ------------------------------------
 *DELIVERY:* {address}
 ------------------------------------
-_Your order is logged. A human will confirm shortly._
-"""
+_Your order is logged. A human will confirm shortly._"""
+
             green_api.sending.sendMessage(user_id, receipt)
 
-            # 4. Log to Sales Tab
-            sales_sheet = gc.open("TechSquad").worksheet("Sales")
+            sales_sheet = sheet_client.open("TechSquad").worksheet("Sales")
             sales_sheet.append_row([order_id, user_id, name, subtotal, address, "Pending"])
-            user_session["cart"] = []  # Clear cart
+            user_session["cart"] = []
         else:
             green_api.sending.sendMessage(user_id, reply)
 
