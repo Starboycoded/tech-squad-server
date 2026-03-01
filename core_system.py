@@ -9,25 +9,40 @@ import openai
 app = Flask(__name__)
 
 # --- 1. SECURE CONFIGURATION ---
+# These pull from Render's environment variables
 GREEN_ID = os.environ.get("GREEN_ID", "7103522365")
 GREEN_TOKEN = os.environ.get("GREEN_TOKEN", "0760da8b4c294314be900a91cdc1130d773fb00a4579419a9d")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "YOUR_GROQ_API_KEY_HERE")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 green_api = API.GreenApi(GREEN_ID, GREEN_TOKEN)
 
+# Hijack OpenAI library to use Groq's servers
 ai_client = openai.OpenAI(
     api_key=GROQ_API_KEY,
     base_url="https://api.groq.com/openai/v1"
 )
 
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
-gc = gspread.authorize(creds)
+# --- 2. GOOGLE SHEETS AUTH WITH PATH FIX ---
+try:
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+
+    # Check if we are on Render (which uses /etc/secrets/) or Local
+    if os.path.exists("/etc/secrets/creds.json"):
+        creds_path = "/etc/secrets/creds.json"
+    else:
+        creds_path = "creds.json"
+
+    creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
+    gc = gspread.authorize(creds)
+    print("SUCCESS: Connected to Google Sheets.")
+except Exception as e:
+    print(f"CRITICAL ERROR: Google Sheets connection failed. Details: {e}")
+    gc = None  # Prevent crash so the web server can still start
 
 chat_data = {}
 
 
-# --- 2. THE VISUAL CATALOG ---
+# --- 3. THE VISUAL CATALOG ---
 @app.route('/')
 def home():
     return "<h1>The Tech Squad Server is Online</h1><p>Append <b>/shop/luxury_hair</b> to the URL to view the catalog.</p>"
@@ -35,6 +50,8 @@ def home():
 
 @app.route('/shop/<vendor_name>')
 def shop(vendor_name):
+    if not gc:
+        return "Database Error: Google Sheets connection is down.", 500
     try:
         sheet = gc.open("TechSquad").sheet1
         products = sheet.get_all_records()
@@ -44,7 +61,7 @@ def shop(vendor_name):
         return f"Database Error: {str(e)}", 500
 
 
-# --- 3. THE WHATSAPP WEBHOOK ---
+# --- 4. THE WHATSAPP WEBHOOK ---
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
@@ -53,6 +70,7 @@ def webhook():
 
     webhook_type = data.get('typeWebhook')
 
+    # Handle Human Override
     if webhook_type == 'outgoingMessageReceived':
         try:
             chat_id = data.get('senderData', {}).get('chatId')
@@ -65,6 +83,7 @@ def webhook():
             pass
         return "OK", 200
 
+    # Handle Customer Messages
     if webhook_type == 'incomingMessageReceived':
         try:
             sender_data = data.get('senderData', {})
@@ -87,6 +106,7 @@ def webhook():
             if chat["muted"]:
                 return "OK", 200
 
+            # Spam Protection
             now = time.time()
             if now - chat["last_time"] < 10:
                 chat["msg_count"] += 1
@@ -99,6 +119,9 @@ def webhook():
                 return "OK", 200
 
             # --- AI BRAIN ---
+            if not gc:
+                return "OK", 200  # Silent fail if sheet is disconnected
+
             sheet = gc.open("TechSquad").sheet1
             inventory = sheet.get_all_records()
 
@@ -109,7 +132,7 @@ def webhook():
             You are Jordan, the primary assistant for The Tech Squad. 
             Your current inventory and prices are: {inventory}. 
             If they ask to see the catalog, provide this link: {catalog_link}
-            Be direct, helpful, and professional. Use a very subtle Nigerian tone when appropriate.
+            Be direct, helpful, and professional. 
             If the user is excessively rude, say 'I will leave you be for now' and end the conversation.
             """
 
@@ -124,6 +147,7 @@ def webhook():
 
             reply = response.choices[0].message.content
 
+            # Toxic Filter
             if any(toxic in text.lower() for toxic in ["idiot", "stupid", "useless", "fool"]):
                 chat["muted"] = True
 
@@ -137,5 +161,6 @@ def webhook():
 
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5001))
+    # Render assigns a dynamic port
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
