@@ -15,11 +15,12 @@ GREEN_ID = os.environ.get("GREEN_ID")
 GREEN_TOKEN = os.environ.get("GREEN_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-# FIXED: Pointing directly to your specific Green API server
+# Explicit positional arguments for your specific 7103 server
 green_api = API.GreenApi(
     GREEN_ID,
     GREEN_TOKEN,
-    hostURI="https://7103.api.greenapi.com"
+    "https://7103.api.greenapi.com",
+    "https://7103.media.greenapi.com"
 )
 
 ai_client = openai.OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
@@ -65,14 +66,17 @@ def webhook():
         if not sheet_client:
             return "OK", 200
 
+        # Memory Check
         customer_sheet = sheet_client.open("TechSquad").worksheet("Customers")
         customers = customer_sheet.get_all_records()
         profile = next((r for r in customers if str(r['Phone']) == str(user_id)), None)
 
+        # Session Init
         if user_id not in chat_data:
             chat_data[user_id] = {"cart": []}
         user_session = chat_data[user_id]
 
+        # Inventory Fetch
         inventory_sheet = sheet_client.open("TechSquad").sheet1
         inventory = inventory_sheet.get_all_records()
 
@@ -128,7 +132,7 @@ _Your order is logged. A human will confirm shortly._"""
 
     except Exception as e:
         print(f"Error: {e}")
-        # Advanced Error Logging to catch hidden bugs
+        # Advanced Error Logging
         traceback.print_exc()
         if hasattr(e, 'args') and len(e.args) > 0 and hasattr(e.args[0], 'text'):
             print(f"API Response Details: {e.args[0].text}")
