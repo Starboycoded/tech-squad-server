@@ -1,6 +1,7 @@
 import os
 import time
 import uuid
+import traceback
 from flask import Flask, request
 from whatsapp_api_client_python import API
 import gspread
@@ -14,11 +15,17 @@ GREEN_ID = os.environ.get("GREEN_ID")
 GREEN_TOKEN = os.environ.get("GREEN_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-green_api = API.GreenApi(GREEN_ID, GREEN_TOKEN)
+# FIXED: Pointing directly to your specific Green API server
+green_api = API.GreenApi(
+    GREEN_ID,
+    GREEN_TOKEN,
+    hostURI="https://7103.api.greenapi.com"
+)
+
 ai_client = openai.OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
 
 chat_data = {}
-gc = None  # Starts empty so the server boots instantly
+gc = None
 
 
 # --- 2. LAZY LOADER FOR GOOGLE SHEETS ---
@@ -36,7 +43,7 @@ def connect_sheets():
     return gc
 
 
-# --- 3. HEALTH CHECK (To satisfy Render's port scan immediately) ---
+# --- 3. HEALTH CHECK ---
 @app.route('/')
 def health():
     return "System Online", 200
@@ -54,7 +61,6 @@ def webhook():
         user_id = sender_data.get('sender')
         text = data.get('messageData', {}).get('textMessageData', {}).get('textMessage', '')
 
-        # Connect to sheets ONLY when someone messages
         sheet_client = connect_sheets()
         if not sheet_client:
             return "OK", 200
@@ -122,6 +128,11 @@ _Your order is logged. A human will confirm shortly._"""
 
     except Exception as e:
         print(f"Error: {e}")
+        # Advanced Error Logging to catch hidden bugs
+        traceback.print_exc()
+        if hasattr(e, 'args') and len(e.args) > 0 and hasattr(e.args[0], 'text'):
+            print(f"API Response Details: {e.args[0].text}")
+
     return "OK", 200
 
 
