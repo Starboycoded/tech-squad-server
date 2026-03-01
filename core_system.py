@@ -9,20 +9,17 @@ import openai
 app = Flask(__name__)
 
 # --- 1. SECURE CONFIGURATION ---
-# These pull from Render's environment variables, falling back to local strings for testing
 GREEN_ID = os.environ.get("GREEN_ID", "7103522365")
 GREEN_TOKEN = os.environ.get("GREEN_TOKEN", "0760da8b4c294314be900a91cdc1130d773fb00a4579419a9d")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "YOUR_GROQ_API_KEY_HERE")
 
 green_api = API.GreenApi(GREEN_ID, GREEN_TOKEN)
 
-# Hijack OpenAI library to use Groq's free servers
 ai_client = openai.OpenAI(
     api_key=GROQ_API_KEY,
     base_url="https://api.groq.com/openai/v1"
 )
 
-# Google Sheets Auth
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
 gc = gspread.authorize(creds)
@@ -112,7 +109,7 @@ def webhook():
             You are Jordan, the primary assistant for The Tech Squad. 
             Your current inventory and prices are: {inventory}. 
             If they ask to see the catalog, provide this link: {catalog_link}
-            Be direct, helpful, and professional. 
+            Be direct, helpful, and professional. Use a very subtle Nigerian tone when appropriate.
             If the user is excessively rude, say 'I will leave you be for now' and end the conversation.
             """
 
@@ -140,6 +137,5 @@ def webhook():
 
 
 if __name__ == '__main__':
-    # Render assigns a dynamic port
     port = int(os.environ.get("PORT", 5001))
     app.run(host='0.0.0.0', port=port, debug=False)
