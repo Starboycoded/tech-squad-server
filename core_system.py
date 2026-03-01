@@ -80,15 +80,19 @@ def webhook():
         inventory_sheet = sheet_client.open("TechSquad").sheet1
         inventory = inventory_sheet.get_all_records()
 
+        # UPDATED: Strict instructions to prevent premature data collection
         system_instructions = f"""
-        You are Jordan. Inventory: {inventory}. 
-        CUSTOMER PROFILE: {profile if profile else "New Customer"}
+        You are Jordan, assistant for The Tech Squad.
+        Inventory: {inventory}. 
+        CUSTOMER PROFILE: {profile if profile else "None"}
 
-        RULES:
-        - Add items to cart as requested.
-        - If profile exists, confirm the address: '{profile.get('Address') if profile else ""}'.
-        - To finish, generate a 'FINAL RECEIPT'. 
-        - For payment, tell them: 'For this test phase, we are using Cash on Delivery.'
+        STRICT RULES:
+        1. BROWSING: Help the user shop, answer questions, and keep track of their cart. DO NOT ask for their name or address during this phase. Let them browse freely.
+        2. CHECKOUT: ONLY when the user explicitly says they are ready to checkout, order, or pay, move to this phase.
+           - If CUSTOMER PROFILE is "None", ask for their Name (no numbers) and a detailed Delivery Address.
+           - If a profile exists, ask if they want delivery to their saved address: '{profile.get('Address') if profile else ""}'.
+        3. RECEIPT: Once details are finalized, generate a beautifully formatted 'FINAL RECEIPT' listing their items and total. Add: 'For this test phase, we are using Cash on Delivery.'
+        4. End your receipt message with the exact hidden phrase: "LOG_ORDER_NOW"
         """
 
         response = ai_client.chat.completions.create(
@@ -98,41 +102,28 @@ def webhook():
 
         reply = response.choices[0].message.content
 
-        if "RECEIPT" in reply.upper() and user_session["cart"]:
+        # Strip the hidden phrase before sending it to the user
+        clean_reply = reply.replace("LOG_ORDER_NOW", "").strip()
+        green_api.sending.sendMessage(user_id, clean_reply)
+
+        # If the AI decided it was time to print a receipt, log the event
+        if "LOG_ORDER_NOW" in reply:
             order_id = f"TS-{uuid.uuid4().hex[:6].upper()}"
-            subtotal = sum(item['price'] * item['qty'] for item in user_session["cart"])
-            items_list = "\n".join(
-                [f"• {i['name']} x{i['qty']} - ₦{i['price'] * i['qty']:,}" for i in user_session["cart"]])
+            name = profile['Name'] if profile else "Extracted from Chat"
+            address = profile['Address'] if profile else "Extracted from Chat"
 
-            name = profile['Name'] if profile else "New Client"
-            address = profile['Address'] if profile else "Address Provided in Chat"
-
-            receipt = f"""*TECH SQUAD OFFICIAL RECEIPT*
-------------------------------------
-*Order ID:* {order_id}
-*Customer:* {name}
-------------------------------------
-*ITEMS:*
-{items_list}
-------------------------------------
-*TOTAL:* ₦{subtotal:,}
-*PAYMENT:* Cash on Delivery
-------------------------------------
-*DELIVERY:* {address}
-------------------------------------
-_Your order is logged. A human will confirm shortly._"""
-
-            green_api.sending.sendMessage(user_id, receipt)
-
+            # Log to Sales Tab
             sales_sheet = sheet_client.open("TechSquad").worksheet("Sales")
-            sales_sheet.append_row([order_id, user_id, name, subtotal, address, "Pending"])
-            user_session["cart"] = []
-        else:
-            green_api.sending.sendMessage(user_id, reply)
+            sales_sheet.append_row([order_id, user_id, name, "Logged", address, "Pending"])
+
+            # Save new user profile if they didn't exist
+            if not profile:
+                customer_sheet.append_row([user_id, name, address, time.strftime("%Y-%m-%d")])
+
+            user_session["cart"] = []  # Clear cart
 
     except Exception as e:
         print(f"Error: {e}")
-        # Advanced Error Logging
         traceback.print_exc()
         if hasattr(e, 'args') and len(e.args) > 0 and hasattr(e.args[0], 'text'):
             print(f"API Response Details: {e.args[0].text}")
