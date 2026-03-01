@@ -133,6 +133,58 @@ def webhook():
     return "OK", 200
 
 
+# --- 5. THE WEB STOREFRONT ---
+@app.route('/shop/<vendor_name>')
+def shop(vendor_name):
+    try:
+        sheet_client = connect_sheets()
+        if not sheet_client:
+            return "Database connection failed. Please try again later.", 500
+
+        inventory_sheet = sheet_client.open("TechSquad").sheet1
+        products = inventory_sheet.get_all_records()
+
+        vendor_title = vendor_name.replace('_', ' ').title()
+
+        # Generating a clean, mobile-friendly digital catalog
+        html = f"""
+        <html>
+        <head>
+            <title>{vendor_title} Catalog</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+        </head>
+        <body style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; background-color: #f9f9f9;'>
+            <h1 style='text-align: center; color: #2c3e50;'>{vendor_title} Menu</h1>
+            <hr style='border: 1px solid #eee;'>
+        """
+
+        for p in products:
+            name = p.get('Product', 'Unknown Item')
+            price = p.get('Price', 0)
+            desc = p.get('Description', 'No description available.')
+            stock = p.get('Stock', 0)
+
+            html += f"""
+            <div style='background: white; border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>
+                <h3 style='margin-top: 0; color: #27ae60;'>{name} - ₦{price:,}</h3>
+                <p style='color: #555;'>{desc}</p>
+                <small style='color: #888;'>In Stock: {stock}</small>
+            </div>
+            """
+
+        html += """
+            <p style='text-align: center; color: #7f8c8d; margin-top: 30px;'>
+                <em>Return to WhatsApp to place your order with Jordan.</em>
+            </p>
+        </body>
+        </html>
+        """
+        return html
+
+    except Exception as e:
+        print(f"Catalog Error: {e}")
+        return f"Storefront is currently updating. Please check back in a moment.", 500
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
