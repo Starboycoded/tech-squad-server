@@ -2,6 +2,7 @@ import os
 import time
 import uuid
 import traceback
+from urllib.parse import quote
 from flask import Flask, request
 from whatsapp_api_client_python import API
 import gspread
@@ -28,7 +29,6 @@ ai_client = openai.OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/o
 chat_data = {}
 gc = None
 
-
 # --- 2. LAZY LOADER FOR GOOGLE SHEETS ---
 def connect_sheets():
     global gc
@@ -43,12 +43,10 @@ def connect_sheets():
             print(f"CRITICAL: Sheets failed: {e}")
     return gc
 
-
 # --- 3. HEALTH CHECK ---
 @app.route('/')
 def health():
     return "System Online", 200
-
 
 # --- 4. THE WEBHOOK ENGINE ---
 @app.route('/webhook', methods=['POST'])
@@ -132,7 +130,6 @@ def webhook():
 
     return "OK", 200
 
-
 # --- 5. THE WEB STOREFRONT ---
 @app.route('/shop/<vendor_name>')
 def shop(vendor_name):
@@ -145,8 +142,8 @@ def shop(vendor_name):
         products = inventory_sheet.get_all_records()
 
         vendor_title = vendor_name.replace('_', ' ').title()
+        bot_phone = "2347025041149"  # Your Green API Bot Number
 
-        # Generating a clean, mobile-friendly digital catalog
         html = f"""
         <html>
         <head>
@@ -155,27 +152,39 @@ def shop(vendor_name):
         </head>
         <body style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; background-color: #f9f9f9;'>
             <h1 style='text-align: center; color: #2c3e50;'>{vendor_title} Menu</h1>
-            <hr style='border: 1px solid #eee;'>
+            <hr style='border: 1px solid #eee; margin-bottom: 20px;'>
         """
 
         for p in products:
             name = p.get('Product', 'Unknown Item')
             price = p.get('Price', 0)
             desc = p.get('Description', 'No description available.')
-            stock = p.get('Stock', 0)
+
+            # Safely handle the stock value
+            try:
+                stock = int(p.get('Stock', 0))
+            except ValueError:
+                stock = 0
+
+            if stock > 0:
+                stock_status = "<span style='color: #27ae60; font-weight: bold;'>Available</span>"
+                wa_text = quote(f"Hi Jordan, please add 1x {name} to my cart.")
+                wa_link = f"https://wa.me/{bot_phone}?text={wa_text}"
+                button = f"<a href='{wa_link}' style='display: inline-block; background: #25D366; color: white; text-decoration: none; padding: 10px 15px; border-radius: 5px; font-weight: bold;'>Order via WhatsApp</a>"
+            else:
+                stock_status = "<span style='color: #e74c3c; font-weight: bold;'>Sold Out</span>"
+                button = f"<button disabled style='background: #bdc3c7; color: #7f8c8d; border: none; padding: 10px 15px; border-radius: 5px; cursor: not-allowed; font-weight: bold;'>Out of Stock</button>"
 
             html += f"""
             <div style='background: white; border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>
-                <h3 style='margin-top: 0; color: #27ae60;'>{name} - ₦{price:,}</h3>
-                <p style='color: #555;'>{desc}</p>
-                <small style='color: #888;'>In Stock: {stock}</small>
+                <h3 style='margin-top: 0; color: #2c3e50; margin-bottom: 5px;'>{name} - ₦{price:,}</h3>
+                <p style='color: #555; margin-top: 0; font-size: 0.9em;'>{desc}</p>
+                <p style='margin-bottom: 15px; font-size: 0.85em;'>Status: {stock_status}</p>
+                {button}
             </div>
             """
 
         html += """
-            <p style='text-align: center; color: #7f8c8d; margin-top: 30px;'>
-                <em>Return to WhatsApp to place your order with Jordan.</em>
-            </p>
         </body>
         </html>
         """
