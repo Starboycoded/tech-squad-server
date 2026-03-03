@@ -159,6 +159,7 @@ def shop(vendor_name):
             name = p.get('Product', 'Unknown Item')
             price = p.get('Price', 0)
             desc = p.get('Description', 'No description available.')
+            img_url = p.get('Raw_Image_URL', '') # Fetching the new image column
 
             # Safely handle the stock value
             try:
@@ -175,8 +176,12 @@ def shop(vendor_name):
                 stock_status = "<span style='color: #e74c3c; font-weight: bold;'>Sold Out</span>"
                 button = f"<button disabled style='background: #bdc3c7; color: #7f8c8d; border: none; padding: 10px 15px; border-radius: 5px; cursor: not-allowed; font-weight: bold;'>Out of Stock</button>"
 
+            # Only render the image tag if a URL actually exists in the sheet
+            img_tag = f"<img src='{img_url}' style='width: 100%; height: auto; border-radius: 5px; margin-bottom: 10px; object-fit: cover;' alt='{name}'>" if img_url else ""
+
             html += f"""
             <div style='background: white; border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>
+                {img_tag}
                 <h3 style='margin-top: 0; color: #2c3e50; margin-bottom: 5px;'>{name} - ₦{price:,}</h3>
                 <p style='color: #555; margin-top: 0; font-size: 0.9em;'>{desc}</p>
                 <p style='margin-bottom: 15px; font-size: 0.85em;'>Status: {stock_status}</p>
