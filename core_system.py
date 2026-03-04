@@ -6,7 +6,7 @@ from flask import Flask, request
 from whatsapp_api_client_python import API
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import openai
+
 
 app = Flask(__name__)
 
