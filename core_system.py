@@ -17,13 +17,11 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 green_api = API.GreenApi(GREEN_ID, GREEN_TOKEN, "https://7103.api.greenapi.com", "https://7103.media.greenapi.com")
 
-# Official Gemini Configuration - Optimized for the 1.5 Flash Model
+# Configure Gemini with the EXACT model ID to fix the 404
 genai.configure(api_key=GEMINI_API_KEY)
-# FIXED: Using the exact model string the SDK expects to resolve the 404
-model = genai.GenerativeModel('gemini-1.5-flash-latest')
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 chat_sessions = {}
-inventory_cache = {"data": None, "last_updated": 0}
 processed_messages = {}
 
 
@@ -31,6 +29,7 @@ processed_messages = {}
 def connect_sheets():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        # Standard path for Render secrets
         creds_path = "/etc/secrets/creds.json" if os.path.exists("/etc/secrets/creds.json") else "creds.json"
         creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
         return gspread.authorize(creds)
@@ -38,32 +37,24 @@ def connect_sheets():
         return None
 
 
-def get_inventory(sheet_client):
-    current_time = time.time()
-    if inventory_cache["data"] is None or current_time - inventory_cache["last_updated"] > 600:
-        try:
-            inventory_cache["data"] = sheet_client.open("TechSquad").sheet1.get_all_records()
-            inventory_cache["last_updated"] = current_time
-        except:
-            pass
-    return inventory_cache["data"]
-
-
 # --- 3. THE BRAIN ---
 def process_conversation(user_id, text):
     try:
         sheet_client = connect_sheets()
         if not sheet_client: return
-        inventory = get_inventory(sheet_client)
+
+        # Simple inventory fetch
+        inventory = sheet_client.open("TechSquad").sheet1.get_all_records()
 
         if user_id not in chat_sessions:
             chat_sessions[user_id] = model.start_chat(history=[])
 
         chat = chat_sessions[user_id]
 
-        system_prompt = f"You are Jordan for Tech Squad. Catalog: https://tech-squad-server.onrender.com/shop/tech_squad. Inventory: {inventory}. Rules: Greet warmly. Show catalog link if relevant. End receipts with LOG_ORDER_NOW."
+        system_instructions = f"Identity: Jordan from Tech Squad. Catalog: https://tech-squad-server.onrender.com/shop/tech_squad. Inventory: {inventory}. Rule: Greet warmly. End receipts with LOG_ORDER_NOW."
 
-        response = chat.send_message(f"{system_prompt}\n\nCustomer: {text}")
+        # The fix: Send instruction and user text together
+        response = chat.send_message(f"Instruction: {system_instructions}\n\nUser: {text}")
         reply = response.text
 
         green_api.sending.sendMessage(user_id, reply.replace("LOG_ORDER_NOW", "").strip())
@@ -71,13 +62,13 @@ def process_conversation(user_id, text):
         if "LOG_ORDER_NOW" in reply:
             sales = sheet_client.open("TechSquad").worksheet("Sales")
             sales.append_row(
-                [f"TS-{uuid.uuid4().hex[:6].upper()}", user_id, "WhatsApp Client", "New Order", "COD", "Pending"])
+                [f"TS-{uuid.uuid4().hex[:6].upper()}", user_id, "WhatsApp User", "New Order", "COD", "Pending"])
             chat_sessions[user_id] = model.start_chat(history=[])
     except Exception as e:
-        print(f"Jordan AI Error: {e}")
+        print(f"Jordan Error: {e}")
 
 
-# --- 4. WEBHOOK ENGINE ---
+# --- 4. WEBHOOK ---
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
@@ -99,7 +90,7 @@ def webhook():
 
 
 @app.route('/')
-def health(): return "System Online", 200
+def health(): return "Jordan Online", 200
 
 
 if __name__ == '__main__':
