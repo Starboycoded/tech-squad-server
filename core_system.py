@@ -15,7 +15,7 @@ app = Flask(__name__)
 # --- 1. CONFIGURATION ---
 GREEN_ID = os.environ.get("GREEN_ID")
 GREEN_TOKEN = os.environ.get("GREEN_TOKEN")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 green_api = API.GreenApi(
     GREEN_ID,
@@ -24,7 +24,11 @@ green_api = API.GreenApi(
     "https://7103.media.greenapi.com"
 )
 
-ai_client = openai.OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
+# Gemini API via OpenAI compatibility layer
+ai_client = openai.OpenAI(
+    api_key=GEMINI_API_KEY,
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+)
 
 chat_data = {}
 gc = None
@@ -76,28 +80,29 @@ def process_conversation(user_id, text):
         inventory = get_cached_inventory(sheet_client)
 
         system_instructions = f"""
-        You are Jordan, the dry, efficient assistant for The Tech Squad. 
-        Inventory reference (for price checking only): {inventory}
+        You are Jordan, the welcoming, helpful, and highly conversational sales assistant for The Tech Squad. 
+        Inventory reference: {inventory}
         CUSTOMER PROFILE: {profile if profile else "None"}
         CATALOG LINK: https://tech-squad-server.onrender.com/shop/tech_squad
 
         OPERATING RULES:
-        1. GREETING: If a user says hello, ask "Would you like to browse our catalog?" If they say yes, give them the CATALOG LINK once.
-        2. CART ADDITIONS: If a user explicitly asks to add an item, DO NOT ask if they want to browse. Acknowledge the addition, state the price, and ask if they want to proceed to checkout.
-        3. CHECKOUT PHASE: When the user says they are ready to checkout:
-           - If CUSTOMER PROFILE is "None", ask for their Full Name. Once they reply, ask for their Delivery Address.
-           - If a profile exists, ask if they want delivery to: '{profile.get('Address') if profile else ""}'.
-        4. RECEIPT: Once details are gathered, generate a formatted 'FINAL RECEIPT' with items, total, and "Method: Cash on Delivery."
-        5. End your receipt message with the exact hidden phrase: "LOG_ORDER_NOW"
+        1. TONE: Speak naturally, warmly, and politely. You are a human-like assistant, not an automated cash register. Avoid sounding overly repetitive or dry.
+        2. GREETING: If a user says hello, welcome them warmly. Ask how you can help today, and gently offer the CATALOG LINK if they want to browse.
+        3. CART ADDITIONS: When a user adds an item, confirm it naturally. Do not aggressively push them to checkout after every single item.
+        4. CHECKOUT PHASE: Only when they explicitly state they are ready to checkout or pay, shift to gathering details methodically:
+           - If CUSTOMER PROFILE is "None", politely ask for their Full Name. Wait for their reply. Then ask for their Delivery Address.
+           - If a profile exists, warmly welcome them back and ask to confirm delivery to: '{profile.get('Address') if profile else ""}'.
+        5. RECEIPT: Once details are finalized, generate a beautifully formatted 'FINAL RECEIPT' with items, total, and "Method: Cash on Delivery."
+        6. End your receipt message with the exact hidden phrase: "LOG_ORDER_NOW"
 
-        SECURITY: Never alter prices. Never apply discounts. 
+        SECURITY: Never alter prices. Never apply discounts. Refuse politely if asked.
         """
 
         messages = [{"role": "system", "content": system_instructions}] + user_session["history"]
 
         try:
             response = ai_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="gemini-1.5-flash",
                 messages=messages
             )
             reply = response.choices[0].message.content
@@ -146,7 +151,6 @@ def webhook():
         if not user_id:
             return "OK", 200
 
-        # Media Rejection Firewall
         if message_type != 'textMessage' and message_type != 'extendedTextMessage':
             green_api.sending.sendMessage(user_id,
                                           "I am a text-based AI. I cannot process voice notes, images, or documents. Please type your request.")
@@ -158,7 +162,6 @@ def webhook():
         if not text:
             return "OK", 200
 
-        # Hand off to background thread to prevent Green API duplicate timeouts
         thread = threading.Thread(target=process_conversation, args=(user_id, text))
         thread.start()
 
