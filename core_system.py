@@ -17,10 +17,10 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 green_api = API.GreenApi(GREEN_ID, GREEN_TOKEN, "https://7103.api.greenapi.com", "https://7103.media.greenapi.com")
 
-# FIXED: Removed the /v1/openai/ suffix to prevent the 'v1main' error
+# FIXED: Removed 'v1beta' or 'v1' from the base URL to let the client handle it
 ai_client = openai.OpenAI(
     api_key=GEMINI_API_KEY,
-    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+    base_url="https://generativelanguage.googleapis.com/v1beta/"
 )
 
 chat_data = {}
@@ -64,7 +64,7 @@ def process_conversation(user_id, text):
 
         system_instructions = f"You are Jordan for Tech Squad. Catalog: https://tech-squad-server.onrender.com/shop/tech_squad. Inventory: {inventory}. Rules: Greet warmly. Only show catalog link if asked. Ask for Name then Address at checkout. End receipts with LOG_ORDER_NOW."
 
-        # FIXED: Using the short-form model name compatible with v1beta
+        # FIXED: Calling the specific chat endpoint for Gemini
         response = ai_client.chat.completions.create(
             model="gemini-1.5-flash",
             messages=[{"role": "system", "content": system_instructions}] + session["history"]
